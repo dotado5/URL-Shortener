@@ -1,0 +1,42 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Url {
+  id              String    @id @default(uuid())
+  shortCode       String    @unique @db.VarChar(12)
+  originalUrl     String    @db.VarChar(2048)
+  deleteTokenHash String    @db.Char(64)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  expiresAt       DateTime?
+  deletedAt       DateTime?
+  clickCount      Int       @default(0)
+  isActive        Boolean   @default(true)
+
+  clicks ClickEvent[]
+
+  @@index([expiresAt])
+  @@index([createdAt])
+}
+
+model ClickEvent {
+  id        String   @id @default(uuid())
+  eventId   String   @unique
+  urlId     String
+  createdAt DateTime @default(now())
+  userAgent String?  @db.VarChar(512)
+  referer   String?  @db.VarChar(512)
+  ipHash    String?  @db.Char(64)
+
+  url Url @relation(fields: [urlId], references: [id], onDelete: Cascade)
+
+  @@index([urlId, createdAt])
+  @@index([createdAt])
+}

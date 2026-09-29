@@ -1,0 +1,116 @@
+name: url-shortener
+
+# Override host ports when something else already listens there, e.g. API_HOST_PORT=3100 docker compose up
+x-app-env: &app-env
+  NODE_ENV: development
+  BASE_URL: http://localhost:${API_HOST_PORT:-3000}
+  DATABASE_URL: postgresql://postgres:postgres@postgres:5432/url_shortener
+  REDIS_URL: redis://redis:6379
+  IP_HASH_SECRET: dev-only-secret-change-me-please-0000
+  LOG_LEVEL: info
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: url_shortener
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d url_shortener"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      target: migrate
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    environment:
+      <<: *app-env
+      PORT: 3000
+    ports:
+      - "${API_HOST_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    stop_grace_period: 30s
+
+  worker:
+    build: .
+    command: ["node", "dist/worker"]
+    environment:
+      <<: *app-env
+      WORKER_HEALTH_PORT: 3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    stop_grace_period: 30s
+
+  # Isolated databases for integration/e2e tests: `docker compose --profile test up -d postgres-test redis-test`
+  postgres-test:
+    profiles: ["test"]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: url_shortener_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d url_shortener_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis-test:
+    profiles: ["test"]
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6380:6379"
+
+volumes:
+  postgres-data:

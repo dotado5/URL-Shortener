@@ -1,0 +1,28 @@
+# dependencies
+node_modules/
+
+# build
+dist/
+coverage/
+*.tsbuildinfo
+
+# environment / secrets
+.env
+.env.*
+!.env.example
+
+# prisma generated client
+src/generated/
+
+# logs
+*.log
+npm-debug.log*
+
+# load test raw output
+load/results/*.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
