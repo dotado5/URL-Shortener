@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PinoLogger } from 'nestjs-pino';
+import { CacheService } from '../cache/cache.service';
 import type { Env } from '../config/env.schema';
 import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -30,6 +31,7 @@ export class UrlsService {
     private readonly prisma: PrismaService,
     private readonly logger: PinoLogger,
     config: ConfigService<Env, true>,
+    private readonly cache: CacheService,
   ) {
     this.logger.setContext(UrlsService.name);
     this.baseUrl = config.get('BASE_URL', { infer: true }).replace(/\/+$/, '');
@@ -61,6 +63,9 @@ export class UrlsService {
           { event: 'URL_CREATED', shortCode, hasExpiry: expiresAt !== null, attempt },
           'short url created',
         );
+        // A code probed shortly before it was issued would otherwise 404 until the negative
+        // entry expired. Bounded by the command timeout and skipped when the breaker is open.
+        await this.cache.clearNegative(shortCode);
         return {
           id: row.id,
           shortCode: row.shortCode,
@@ -118,17 +123,27 @@ export class UrlsService {
       throw new ForbiddenException('Invalid or missing delete token');
     }
 
-    if (row.deletedAt !== null) return;
-
-    // Conditional on deletedAt still being null, so two concurrent deletes set it once.
-    const { count } = await this.prisma.url.updateMany({
-      where: { id: row.id, deletedAt: null },
-      data: { deletedAt: new Date() },
-    });
-    if (count > 0) {
-      this.logger.info({ event: 'URL_DELETED', shortCode }, 'short url deleted');
+    if (row.deletedAt === null) {
+      // Conditional on deletedAt still being null, so two concurrent deletes set it once.
+      const { count } = await this.prisma.url.updateMany({
+        where: { id: row.id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      if (count > 0) {
+        this.logger.info({ event: 'URL_DELETED', shortCode }, 'short url deleted');
+      }
     }
-    // Milestone 4: invalidate url:{shortCode} here.
+
+    // Also on repeat deletes: a retry can clean up an entry an earlier attempt failed to remove.
+    // Database first, then cache, so a concurrent redirect cannot re-populate a stale entry
+    // from a row that is not yet marked deleted.
+    const invalidated = await this.cache.invalidate(shortCode);
+    if (!invalidated) {
+      this.logger.error(
+        { event: 'CACHE_INVALIDATION_FAILED', shortCode },
+        'cache entry not removed; it will expire within CACHE_TTL_SECONDS',
+      );
+    }
   }
 }
 

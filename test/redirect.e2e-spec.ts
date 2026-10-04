@@ -242,7 +242,14 @@ describe('Redirects and deletion (e2e)', () => {
         responses: Record<string, unknown>;
         parameters: { name: string }[];
       };
-      expect(Object.keys(del.responses).sort()).toEqual(['204', '403', '404']);
+      expect(Object.keys(del.responses).sort()).toEqual([
+        '204',
+        '403',
+        '404',
+        '429',
+        '503',
+        'default',
+      ]);
       expect(del.parameters.map((p) => p.name)).toContain('X-Delete-Token');
     });
   });

@@ -6,13 +6,21 @@ import { ConfigModule } from './config/config.module';
 import { HealthModule } from './health/health.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { QueueWorkersModule } from './queues/queues.module';
 
 /**
  * Background worker process. Exposes only health and metrics over HTTP.
- * BullMQ processors register here from Milestone 6; producers never do.
+ * Processors register here; producers never do.
  */
 @Module({
-  imports: [ConfigModule, LoggerModule, PrismaModule, MetricsModule, HealthModule],
+  imports: [
+    ConfigModule,
+    LoggerModule,
+    PrismaModule,
+    MetricsModule,
+    HealthModule,
+    QueueWorkersModule,
+  ],
   providers: [{ provide: APP_FILTER, useClass: HttpExceptionFilter }],
 })
 export class WorkerModule {}

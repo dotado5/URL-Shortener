@@ -14,7 +14,8 @@ import { validateEnv } from './env.schema';
       cache: true,
       validate: validateEnv,
       ignoreEnvFile: process.env.NODE_ENV === 'production',
-      envFilePath: process.env.NODE_ENV === 'test' ? ['.env.test', '.env'] : ['.env'],
+      // Tests read only .env.test so a developer's local .env can never leak into them.
+      envFilePath: process.env.NODE_ENV === 'test' ? ['.env.test'] : ['.env'],
     }),
   ],
   providers: [ConfigService],

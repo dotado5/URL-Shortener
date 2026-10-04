@@ -208,8 +208,16 @@ describe('URL creation and info (e2e)', () => {
       const res = await request(app.getHttpServer()).get('/api/docs-json').expect(200);
       const create = res.body.paths['/api/urls'].post;
       const info = res.body.paths['/api/urls/{shortCode}'].get;
-      expect(Object.keys(create.responses).sort()).toEqual(['201', '400', '413', '500']);
-      expect(Object.keys(info.responses).sort()).toEqual(['200', '404']);
+      expect(Object.keys(create.responses).sort()).toEqual([
+        '201',
+        '400',
+        '413',
+        '429',
+        '500',
+        '503',
+        'default',
+      ]);
+      expect(Object.keys(info.responses).sort()).toEqual(['200', '404', '429', 'default']);
       expect(res.body.components.schemas.CreatedUrlDto.properties).toHaveProperty('deleteToken');
       expect(res.body.components.schemas.UrlInfoDto.properties.status.enum).toEqual([
         'active',

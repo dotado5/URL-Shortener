@@ -25,6 +25,7 @@ import {
   ApiPayloadTooLargeResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { RateLimited } from '../rate-limit/rate-limit.swagger';
 import { CreateUrlDto } from './dto/create-url.dto';
 import { CreatedUrlDto, ErrorDto, UrlInfoDto } from './dto/url-response.dto';
 import { UrlsService } from './urls.service';
@@ -35,6 +36,7 @@ export class UrlsController {
   constructor(private readonly urls: UrlsService) {}
 
   @Post()
+  @RateLimited('create', true)
   @HttpCode(HttpStatus.CREATED)
   @Header('Cache-Control', 'no-store')
   @ApiOperation({
@@ -53,6 +55,7 @@ export class UrlsController {
   }
 
   @Get(':shortCode')
+  @RateLimited('info', false)
   @Header('Cache-Control', 'no-store')
   @ApiOperation({
     summary: 'Inspect a short URL',
@@ -68,6 +71,7 @@ export class UrlsController {
   }
 
   @Delete(':shortCode')
+  @RateLimited('delete', true)
   @HttpCode(HttpStatus.NO_CONTENT)
   @Header('Cache-Control', 'no-store')
   @ApiOperation({

@@ -22,6 +22,25 @@ export interface HealthIndicator {
 export class HealthService {
   private readonly indicators: HealthIndicator[] = [];
   private shuttingDown = false;
+  /**
+   * Upper bound for any single dependency check. A client that is still waiting for its first
+   * connection never sends a command, so command timeouts do not apply; without this bound a
+   * worker booted while Redis was refused answered /health/ready never (found in e2e testing).
+   * An orchestrator probe that hangs is worse than one that says "down".
+   */
+  checkTimeoutMs = 2_000;
+
+  private async boundedCheck(indicator: HealthIndicator): Promise<boolean> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), this.checkTimeoutMs);
+    });
+    try {
+      return await Promise.race([indicator.check().catch(() => false), timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
 
   constructor(prisma: PrismaService) {
     this.register({
@@ -46,7 +65,7 @@ export class HealthService {
 
   async readiness(): Promise<ReadinessReport> {
     const results = await Promise.all(
-      this.indicators.map(async (i) => [i, await i.check()] as const),
+      this.indicators.map(async (i) => [i, await this.boundedCheck(i)] as const),
     );
 
     const checks: Record<string, CheckState> = {};

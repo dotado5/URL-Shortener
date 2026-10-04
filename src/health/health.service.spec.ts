@@ -46,4 +46,20 @@ describe('HealthService.readiness', () => {
     expect(report.status).toBe('down');
     expect(report.checks.database).toBe('up');
   });
+
+  it('treats a check that never settles as failed instead of hanging (regression)', async () => {
+    const svc = makeService(true);
+    svc.checkTimeoutMs = 20;
+    svc.register({ name: 'redis', critical: true, check: () => new Promise(() => undefined) });
+    const t0 = Date.now();
+    const report = await svc.readiness();
+    expect(Date.now() - t0).toBeLessThan(500);
+    expect(report).toEqual({ status: 'down', checks: { database: 'up', redis: 'down' } });
+  });
+
+  it('treats a check that throws as failed', async () => {
+    const svc = makeService(true);
+    svc.register({ name: 'redis', critical: false, check: () => Promise.reject(new Error('x')) });
+    expect((await svc.readiness()).checks.redis).toBe('degraded');
+  });
 });

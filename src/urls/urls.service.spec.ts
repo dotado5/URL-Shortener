@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { ConfigService } from '@nestjs/config';
+import type { CacheService } from '../cache/cache.service';
 import type { PinoLogger } from 'nestjs-pino';
 import type { Env } from '../config/env.schema';
 import { Prisma } from '../generated/prisma/client';
@@ -33,6 +34,7 @@ interface Harness {
   create: jest.Mock;
   findUnique: jest.Mock;
   updateMany: jest.Mock;
+  cache: { clearNegative: jest.Mock; invalidate: jest.Mock };
   logs: { level: string; obj: Record<string, unknown> }[];
 }
 
@@ -55,11 +57,17 @@ function makeService(): Harness {
     get: (key: keyof Env) => CONFIG[key],
   } as unknown as ConfigService<Env, true>;
 
+  const cache = {
+    clearNegative: jest.fn().mockResolvedValue(undefined),
+    invalidate: jest.fn().mockResolvedValue(true),
+  };
+
   return {
-    service: new UrlsService(prisma, logger, config),
+    service: new UrlsService(prisma, logger, config, cache as unknown as CacheService),
     create,
     findUnique,
     updateMany,
+    cache,
     logs,
   };
 }
@@ -323,5 +331,66 @@ describe('UrlsService.delete', () => {
     const logged = JSON.stringify(h.logs);
     expect(logged).not.toContain(token);
     expect(logged).not.toContain('wrong-token-value');
+  });
+});
+
+describe('UrlsService cache interaction', () => {
+  it('clears any negative-cache entry for the newly issued code', async () => {
+    const h = makeService();
+    h.create.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
+      Promise.resolve(rowFrom(data)),
+    );
+    const out = await h.service.create({ url: 'https://example.com' });
+    expect(h.cache.clearNegative).toHaveBeenCalledWith(out.shortCode);
+  });
+
+  it('does not touch the cache when validation fails', async () => {
+    const h = makeService();
+    await h.service.create({ url: 'ftp://x' }).catch(() => undefined);
+    expect(h.cache.clearNegative).not.toHaveBeenCalled();
+  });
+
+  const { token, hash } = issueDeleteToken();
+  const row = (deletedAt: Date | null = null) => ({ id: 'id-1', deleteTokenHash: hash, deletedAt });
+
+  it('invalidates the cache after the database update', async () => {
+    const h = makeService();
+    const order: string[] = [];
+    h.findUnique.mockResolvedValue(row());
+    h.updateMany.mockImplementation(() => {
+      order.push('db');
+      return Promise.resolve({ count: 1 });
+    });
+    h.cache.invalidate.mockImplementation(() => {
+      order.push('cache');
+      return Promise.resolve(true);
+    });
+    await h.service.delete('abc1234', token);
+    expect(order).toEqual(['db', 'cache']);
+    expect(h.cache.invalidate).toHaveBeenCalledWith('abc1234');
+  });
+
+  it('invalidates again on a repeat delete, so a retry can clean up a failed invalidation', async () => {
+    const h = makeService();
+    h.findUnique.mockResolvedValue(row(new Date()));
+    await h.service.delete('abc1234', token);
+    expect(h.updateMany).not.toHaveBeenCalled();
+    expect(h.cache.invalidate).toHaveBeenCalledWith('abc1234');
+  });
+
+  it('still succeeds when invalidation fails, logging CACHE_INVALIDATION_FAILED', async () => {
+    const h = makeService();
+    h.findUnique.mockResolvedValue(row());
+    h.updateMany.mockResolvedValue({ count: 1 });
+    h.cache.invalidate.mockResolvedValue(false);
+    await expect(h.service.delete('abc1234', token)).resolves.toBeUndefined();
+    expect(h.logs.some((l) => l.obj.event === 'CACHE_INVALIDATION_FAILED')).toBe(true);
+  });
+
+  it('does not invalidate when the token is rejected', async () => {
+    const h = makeService();
+    h.findUnique.mockResolvedValue(row());
+    await h.service.delete('abc1234', 'wrong').catch(() => undefined);
+    expect(h.cache.invalidate).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { Controller, Get, GoneException, NotFoundException, Param, Res } from '@nestjs/common';
+import { Controller, Get, GoneException, NotFoundException, Param, Req, Res } from '@nestjs/common';
 import {
   ApiFoundResponse,
   ApiGoneResponse,
@@ -7,7 +7,9 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { clientIp } from '../common/utils/ip';
+import { AnalyticsProducer } from '../queues/analytics/analytics.producer';
 import { ErrorDto } from '../urls/dto/url-response.dto';
 import { RedirectService } from './redirect.service';
 
@@ -16,12 +18,15 @@ export const REDIRECT_CACHE_CONTROL = 'private, no-store';
 /**
  * Root-level catch-all. It must be registered after every other controller, which is why
  * RedirectModule is imported last in AppModule. Express answers HEAD from this GET handler;
- * from Milestone 6 HEAD will skip analytics.
+ * HEAD responses do not produce a click.
  */
 @ApiTags('redirect')
 @Controller()
 export class RedirectController {
-  constructor(private readonly redirects: RedirectService) {}
+  constructor(
+    private readonly redirects: RedirectService,
+    private readonly analytics: AnalyticsProducer,
+  ) {}
 
   @Get(':shortCode')
   @ApiOperation({
@@ -41,7 +46,11 @@ export class RedirectController {
   })
   @ApiNotFoundResponse({ type: ErrorDto, description: 'Unknown or malformed short code' })
   @ApiGoneResponse({ type: ErrorDto, description: 'The short URL has expired or been deleted' })
-  async follow(@Param('shortCode') shortCode: string, @Res() res: Response): Promise<void> {
+  async follow(
+    @Param('shortCode') shortCode: string,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
     // Set before any throw so error responses from the exception filter carry it too.
     res.setHeader('Cache-Control', REDIRECT_CACHE_CONTROL);
 
@@ -53,6 +62,15 @@ export class RedirectController {
         // re-encode it and write an HTML body nobody reads.
         res.status(302).setHeader('Location', result.location);
         res.end();
+        // After the response is sent, never awaited (D10). HEAD is a probe, not a click.
+        if (req.method === 'GET') {
+          this.analytics.record({
+            shortCode,
+            ip: clientIp(req),
+            userAgent: req.headers['user-agent'],
+            referer: req.headers.referer,
+          });
+        }
         return;
       case 'expired':
         throw new GoneException('This short URL has expired');

@@ -48,6 +48,33 @@ describe('validateEnv', () => {
     expect(() => validateEnv({ ...minimal, PORT: '70000' })).toThrow(/PORT/);
   });
 
+  it.each(['bogus', '61 * * * *', '0 25 * * *', '* * * * * * *', '*/0 * * * *'])(
+    'rejects the invalid CLEANUP_CRON %p at boot',
+    (cron) => {
+      expect(() => validateEnv({ ...minimal, CLEANUP_CRON: cron })).toThrow(/CLEANUP_CRON/);
+    },
+  );
+
+  it.each(['*/15 * * * *', '* * * * *', '0 3 * * *'])('accepts the cron %p', (cron) => {
+    expect(validateEnv({ ...minimal, CLEANUP_CRON: cron }).CLEANUP_CRON).toBe(cron);
+  });
+
+  it('requires the shutdown timeout to leave room for an in-flight job', () => {
+    expect(() =>
+      validateEnv({ ...minimal, JOB_TIMEOUT_MS: '10000', SHUTDOWN_TIMEOUT_MS: '10000' }),
+    ).toThrow(/SHUTDOWN_TIMEOUT_MS/);
+    expect(
+      validateEnv({ ...minimal, JOB_TIMEOUT_MS: '10000', SHUTDOWN_TIMEOUT_MS: '13000' })
+        .SHUTDOWN_TIMEOUT_MS,
+    ).toBe(13000);
+  });
+
+  it('defaults are consistent with each other', () => {
+    const env = validateEnv(minimal);
+    expect(env.SHUTDOWN_TIMEOUT_MS).toBeGreaterThanOrEqual(env.JOB_TIMEOUT_MS + 3000);
+    expect(env.SHUTDOWN_TIMEOUT_MS).toBeLessThan(30_000);
+  });
+
   it('rejects an unknown RATE_LIMIT_FAIL_MODE', () => {
     expect(() => validateEnv({ ...minimal, RATE_LIMIT_FAIL_MODE: 'maybe' })).toThrow(
       /RATE_LIMIT_FAIL_MODE/,
